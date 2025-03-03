@@ -85,6 +85,18 @@ contract GrailDollar is IGrailDollar, OFT {
         return true;
     }
 
+    /// @inheritdoc IGrailDollar
+    function recoverToken(Currency recoveredCurrency, address recipient, uint256 amount) external override onlyOwner {
+        if (currency == recoveredCurrency) revert CannotRecoverCurrency();
+
+        uint256 recoveredAmount;
+        if (amount == 0) {
+            recoveredAmount = currency.balanceOfSelf();
+        }
+
+        currency.transfer(recipient, recoveredAmount);
+    }
+
     function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
         if (peers[_eid] != bytes32(0)) revert PeerExist();
 

@@ -2,6 +2,8 @@
 
 pragma solidity ^0.8.0;
 
+import {Currency} from "../libraries/Currency.sol";
+
 interface IGrailDollar {
     /// @notice Revert when amount is either zero or less than LOT_AMOUNT
     error InvalidAmount();
@@ -14,6 +16,9 @@ interface IGrailDollar {
 
     /// @notice Revert when not called by authorized protocol minter
     error OnlyMinterAllowed();
+
+    /// @notice Revert when trying to recovered accepted currency
+    error CannotRecoverCurrency();
 
     /**
      * @notice Emitted whenever an account mints GUSD
@@ -71,4 +76,13 @@ interface IGrailDollar {
      * @param amount the amount in 6 decimals
      */
     function debit(address account, uint256 amount) external returns (bool);
+
+    /**
+     * @notice useful for recovering native/local tokens sent to the contract by mistake
+     *
+     * @param recoveredCurrency address of token to withdraw
+     * @param recipient address of token receiver
+     * @param amount the amount to recover
+     */
+    function recoverToken(Currency recoveredCurrency, address recipient, uint256 amount) external;
 }
