@@ -53,7 +53,7 @@ contract GrailDollar is IGrailDollar, OFT {
     function redeem(uint256 amount) external override {
         uint256 balance = currency.balanceOfSelf();
 
-        if (amount == 0 || amount < LOT_AMOUNT) revert InvalidAmount();
+        if (amount == 0 || amount < gusdConversionRate) revert InvalidAmount();
         uint256 amountLD = _previewRedeem(amount);
 
         if (balance < amountLD) revert InsufficientLiquidity();
