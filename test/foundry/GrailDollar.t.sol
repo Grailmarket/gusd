@@ -51,17 +51,22 @@ contract GrailDollarTest is TestHelperOz5 {
     address private minterA = makeAddr("minterA");
     address private minterB = makeAddr("minterB");
 
+    event SetProtocolFee(uint16 newFee);
     event Mint(address indexed account, uint256 amount);
     event Redeem(address indexed account, uint256 amount);
     event CreditedTo(address indexed account, uint256 amount);
     event DebitedFrom(address indexed account, uint256 amount);
+    event CollectFee(address indexed collector, address indexed recipient, uint256 amount);
 
     error InvalidAmount();
     error PeerExist();
+    error FeeTooLarge(uint16 fee);
     error InsufficientLiquidity();
     error OnlyMinterAllowed();
     error CannotRecoverCurrency();
     error ERC20TransferFromFailed();
+    error AmountExceedsAccruedFee();
+    error OwnableUnauthorizedAccount(address owner);
     error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed);
 
     function setUp() public virtual override {
@@ -114,6 +119,9 @@ contract GrailDollarTest is TestHelperOz5 {
 
         assertEq(aGUSD.gusdConversionRate(), 100);
         assertEq(bGUSD.gusdConversionRate(), 100);
+
+        assertEq(aGUSD.protocolFeeBps(), 300);
+        assertEq(bGUSD.protocolFeeBps(), 300);
 
         assertEq(aGUSD.currencyConversionRate(), 1);
         assertEq(bGUSD.currencyConversionRate(), 10 ** 12);
@@ -184,6 +192,8 @@ contract GrailDollarTest is TestHelperOz5 {
 
     function test_mint_with_USDC_succeeds() public {
         uint256 lotAmount = 1_000 * 10 ** 6;
+        uint256 mintingPrice = 10 * 10 ** 6;
+        uint256 protocolFee = mintingPrice * 300 / 10_000;
         USDC.mint(userA, 100 * 10 ** 6);
         uint256 balanceBefore = USDC.balanceOf(userA);
         // uint256 mintPrice = 10
@@ -195,12 +205,15 @@ contract GrailDollarTest is TestHelperOz5 {
         aGUSD.mint();
         vm.stopPrank();
 
-        assertEq(USDC.balanceOf(userA), balanceBefore - 10 * 10 ** 6);
+        assertEq(USDC.balanceOf(userA), balanceBefore - (mintingPrice + protocolFee));
         assertEq(aGUSD.balanceOf(userA), lotAmount);
+        assertEq(aGUSD.protocolFeesAccrued(), protocolFee);
     }
 
     function test_mint_with_USDT_succeeds() public {
         uint256 lotAmount = 1_000 * 10 ** 6;
+        uint256 mintingPrice = 10 * 10 ** 18;
+        uint256 protocolFee = mintingPrice * 300 / 10_000;
         USDT.mint(userA, 100 * 10 ** 18);
         uint256 balanceBefore = USDT.balanceOf(userA);
 
@@ -212,8 +225,9 @@ contract GrailDollarTest is TestHelperOz5 {
         bGUSD.mint();
         vm.stopPrank();
 
-        assertEq(USDT.balanceOf(userA), balanceBefore - 10 * 10 ** 18);
+        assertEq(USDT.balanceOf(userA), balanceBefore - (mintingPrice + protocolFee));
         assertEq(bGUSD.balanceOf(userA), lotAmount);
+        assertEq(bGUSD.protocolFeesAccrued(), protocolFee);
     }
 
     function test_mint_reverts_if_insufficient_user_balance() public {
@@ -393,7 +407,7 @@ contract GrailDollarTest is TestHelperOz5 {
         assertEq(USDT.balanceOf(address(aGUSD)), lostAmount);
 
         uint256 balanceOfUserB = USDT.balanceOf(userB);
-        vm.prank(aGUSD.owner());
+        vm.prank(aGUSD.owner()); // not necessary
         aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, recoveredAmount);
 
         assertEq(USDT.balanceOf(userB), balanceOfUserB + recoveredAmount);
@@ -409,7 +423,7 @@ contract GrailDollarTest is TestHelperOz5 {
         assertEq(USDT.balanceOf(address(aGUSD)), amount);
 
         uint256 balanceOfUserB = USDT.balanceOf(userB);
-        vm.prank(aGUSD.owner());
+        vm.prank(aGUSD.owner()); // not necessary
         aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, 0);
 
         assertEq(USDT.balanceOf(userB), balanceOfUserB + amount);
@@ -424,10 +438,123 @@ contract GrailDollarTest is TestHelperOz5 {
 
         assertEq(USDT.balanceOf(address(aGUSD)), amount);
 
-        vm.expectRevert(); // Unauthorized error
+        vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, userA)); // Unauthorized error
         vm.prank(userA);
         aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, 0);
 
         assertEq(USDT.balanceOf(userB), 0);
+    }
+
+    function test_collectProtocolFees_succeeds() public {
+        uint256 numOfMints = 5;
+        uint256 mintingPrice = 10 * 10 ** 6;
+        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        USDC.mint(userA, 1000 * 10 ** 6);
+
+        vm.startPrank(userA);
+        USDC.approve(address(aGUSD), MAX_INT);
+
+        for (uint256 i = 0; i < numOfMints; i++) {
+            aGUSD.mint();
+        }
+
+        vm.stopPrank();
+
+        uint256 amount = protocolFee * 3;
+        uint256 userBBalanceBefore = USDC.balanceOf(userB);
+        uint256 accruedFee = protocolFee * numOfMints;
+
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        vm.prank(aGUSD.owner());
+        vm.expectEmit();
+        emit CollectFee(aGUSD.owner(), userB, amount);
+        aGUSD.collectProtocolFee(userB, amount);
+
+        assertEq(USDC.balanceOf(userB), userBBalanceBefore + amount);
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee - amount);
+    }
+
+    function test_collectProtocolFees_reverts_when_amount_exceeds_accrued_fee() public {
+        uint256 numOfMints = 5;
+        uint256 mintingPrice = 10 * 10 ** 6;
+        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        USDC.mint(userA, 1000 * 10 ** 6);
+
+        vm.startPrank(userA);
+        USDC.approve(address(aGUSD), MAX_INT);
+
+        for (uint256 i = 0; i < numOfMints; i++) {
+            aGUSD.mint();
+        }
+
+        vm.stopPrank();
+
+        uint256 amount = protocolFee * 30;
+        uint256 userBBalanceBefore = USDC.balanceOf(userB);
+        uint256 accruedFee = protocolFee * numOfMints;
+
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        vm.prank(aGUSD.owner()); // not necessary
+        vm.expectRevert(AmountExceedsAccruedFee.selector);
+        aGUSD.collectProtocolFee(userB, amount);
+
+        assertEq(USDC.balanceOf(userB), userBBalanceBefore);
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+    }
+
+    function test_collectProtocolFees_reverts_when_caller_not_owner() public {
+        uint256 numOfMints = 5;
+        uint256 mintingPrice = 10 * 10 ** 6;
+        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        USDC.mint(userA, 1000 * 10 ** 6);
+
+        vm.startPrank(userA);
+        USDC.approve(address(aGUSD), MAX_INT);
+
+        for (uint256 i = 0; i < numOfMints; i++) {
+            aGUSD.mint();
+        }
+
+        vm.stopPrank();
+
+        uint256 amount = protocolFee * 3;
+        uint256 userBBalanceBefore = USDC.balanceOf(userB);
+        uint256 accruedFee = protocolFee * numOfMints;
+
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        vm.prank(userA);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, userA));
+        aGUSD.collectProtocolFee(userB, amount);
+
+        assertEq(USDC.balanceOf(userB), userBBalanceBefore);
+        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+    }
+
+    function test_setProtocolFee_succeeds() public {
+        assertEq(aGUSD.protocolFeeBps(), 300);
+
+        vm.expectEmit();
+        emit SetProtocolFee(500);
+        aGUSD.setProtocolFee(500);
+
+        assertEq(aGUSD.protocolFeeBps(), 500);
+    }
+
+    function test_setProtocolFee_reverts_when_fee_exceeds_max_allowed() public {
+        assertEq(aGUSD.protocolFeeBps(), 300);
+        uint16 fee = 1_500;
+
+        vm.expectRevert(abi.encodeWithSelector(FeeTooLarge.selector, fee));
+        aGUSD.setProtocolFee(fee);
+
+        assertEq(aGUSD.protocolFeeBps(), 300);
+    }
+
+    function test_setProtocolFee_reverts_when_caller_not_owner() public {
+        vm.prank(userA);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, userA));
+        aGUSD.setProtocolFee(500);
+
+        assertEq(aGUSD.protocolFeeBps(), 300);
     }
 }

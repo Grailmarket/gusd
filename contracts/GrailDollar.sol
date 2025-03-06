@@ -117,6 +117,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
 
     /// @inheritdoc IProtocolFees
     function collectProtocolFee(address recipient, uint256 amount) external override onlyOwner {
+        if (amount > protocolFeesAccrued) revert AmountExceedsAccruedFee();
         uint256 amountCollected;
 
         amountCollected = (amount == 0) ? protocolFeesAccrued : amount;
