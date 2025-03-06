@@ -32,14 +32,14 @@ interface IGrailDollar {
     event Redeem(address indexed account, uint256 amount);
 
     /**
-     * @notice Emitted whenever minter mints GUSD reward
+     * @notice Emitted whenever minter credit's GUSD reward
      */
-    event Credit(address indexed account, uint256 amount);
+    event CreditedTo(address indexed account, uint256 amount);
 
     /**
      * @notice Emitted whenever minter burns staked GUSD for wager
      */
-    event Debit(address indexed account, uint256 amount);
+    event DebitedFrom(address indexed account, uint256 amount);
 
     /**
      * @notice Emitted when minter account is added
@@ -67,7 +67,7 @@ interface IGrailDollar {
      * @param account the account address
      * @param amount the amount in 6 decimals
      */
-    function credit(address account, uint256 amount) external returns (bool);
+    function creditTo(address account, uint256 amount) external returns (bool);
 
     /**
      * @dev Allow prediction market to burn stake
@@ -75,7 +75,7 @@ interface IGrailDollar {
      * @param account the account address
      * @param amount the amount in 6 decimals
      */
-    function debit(address account, uint256 amount) external returns (bool);
+    function debitFrom(address account, uint256 amount) external returns (bool);
 
     /**
      * @notice useful for recovering native/local tokens sent to the contract by mistake

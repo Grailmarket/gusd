@@ -53,8 +53,8 @@ contract GrailDollarTest is TestHelperOz5 {
 
     event Mint(address indexed account, uint256 amount);
     event Redeem(address indexed account, uint256 amount);
-    event Credit(address indexed account, uint256 amount);
-    event Debit(address indexed account, uint256 amount);
+    event CreditedTo(address indexed account, uint256 amount);
+    event DebitedFrom(address indexed account, uint256 amount);
 
     error InvalidAmount();
     error PeerExist();
@@ -336,5 +336,98 @@ contract GrailDollarTest is TestHelperOz5 {
 
         assertEq(USDT.balanceOf(address(bGUSD)), LIQUIDITY - USDT_REDEEMED);
         assertEq(USDT.balanceOf(userA), USDT_REDEEMED);
+    }
+
+    function test_creditTo_succeeds() public {
+        uint256 amount = 100 * 10 ** 6;
+
+        vm.prank(minterA);
+        vm.expectEmit();
+        emit CreditedTo(userA, amount);
+        aGUSD.creditTo(userA, amount);
+
+        assertEq(aGUSD.balanceOf(userA), amount);
+    }
+
+    function test_creditTo_reverts_when_caller_not_minter() public {
+        uint256 amount = 100 * 10 ** 6;
+
+        vm.prank(userB);
+        vm.expectRevert(OnlyMinterAllowed.selector);
+        aGUSD.creditTo(userA, amount);
+
+        assertEq(aGUSD.balanceOf(userA), 0);
+    }
+
+    function test_debitFrom_succeeds() public {
+        uint256 amount = 100 * 10 ** 6;
+        aGUSD.mint(userA, amount);
+        uint256 balanceBefore = aGUSD.balanceOf(userA);
+
+        vm.prank(minterA);
+        vm.expectEmit();
+        emit DebitedFrom(userA, amount);
+        aGUSD.debitFrom(userA, amount);
+
+        assertEq(aGUSD.balanceOf(userA), balanceBefore - amount);
+    }
+
+    function test_debitFrom_reverts_when_caller_not_minter() public {
+        uint256 amount = 100 * 10 ** 6;
+
+        vm.prank(userB);
+        vm.expectRevert(OnlyMinterAllowed.selector);
+        aGUSD.debitFrom(userA, amount);
+
+        assertEq(aGUSD.balanceOf(userA), 0);
+    }
+
+    function test_recoverToken_specific_amount_succeeds() public {
+        uint256 lostAmount = 100 * 10 ** 18;
+        uint256 recoveredAmount = 90 * 10 ** 18;
+        USDT.mint(userA, lostAmount);
+
+        vm.prank(userA);
+        USDT.transfer(address(aGUSD), lostAmount);
+
+        assertEq(USDT.balanceOf(address(aGUSD)), lostAmount);
+
+        uint256 balanceOfUserB = USDT.balanceOf(userB);
+        vm.prank(aGUSD.owner());
+        aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, recoveredAmount);
+
+        assertEq(USDT.balanceOf(userB), balanceOfUserB + recoveredAmount);
+    }
+
+    function test_recoverToken_all_balance_succeeds() public {
+        uint256 amount = 100 * 10 ** 18;
+        USDT.mint(userA, amount);
+
+        vm.prank(userA);
+        USDT.transfer(address(aGUSD), amount);
+
+        assertEq(USDT.balanceOf(address(aGUSD)), amount);
+
+        uint256 balanceOfUserB = USDT.balanceOf(userB);
+        vm.prank(aGUSD.owner());
+        aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, 0);
+
+        assertEq(USDT.balanceOf(userB), balanceOfUserB + amount);
+    }
+
+    function test_recoverToken_reverts_when_caller_not_authorized() public {
+        uint256 amount = 100 * 10 ** 18;
+        USDT.mint(userA, amount);
+
+        vm.prank(userA);
+        USDT.transfer(address(aGUSD), amount);
+
+        assertEq(USDT.balanceOf(address(aGUSD)), amount);
+
+        vm.expectRevert(); // Unauthorized error
+        vm.prank(userA);
+        aGUSD.recoverToken(Currency.wrap(address(USDT)), userB, 0);
+
+        assertEq(USDT.balanceOf(userB), 0);
     }
 }

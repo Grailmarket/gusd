@@ -66,21 +66,21 @@ contract GrailDollar is IGrailDollar, OFT {
     }
 
     /// @inheritdoc IGrailDollar
-    function credit(address account, uint256 amount) external override returns (bool) {
+    function creditTo(address account, uint256 amount) external override returns (bool) {
         if (msg.sender != minter) revert OnlyMinterAllowed();
 
         _mint(account, amount);
-        emit Credit(account, amount);
+        emit CreditedTo(account, amount);
 
         return true;
     }
 
     /// @inheritdoc IGrailDollar
-    function debit(address account, uint256 amount) external override returns (bool) {
+    function debitFrom(address account, uint256 amount) external override returns (bool) {
         if (msg.sender != minter) revert OnlyMinterAllowed();
 
         _burn(account, amount);
-        emit Debit(account, amount);
+        emit DebitedFrom(account, amount);
 
         return true;
     }
@@ -89,12 +89,11 @@ contract GrailDollar is IGrailDollar, OFT {
     function recoverToken(Currency recoveredCurrency, address recipient, uint256 amount) external override onlyOwner {
         if (currency == recoveredCurrency) revert CannotRecoverCurrency();
 
-        uint256 recoveredAmount;
         if (amount == 0) {
-            recoveredAmount = currency.balanceOfSelf();
+            amount = recoveredCurrency.balanceOfSelf();
         }
 
-        currency.transfer(recipient, recoveredAmount);
+        recoveredCurrency.transfer(recipient, amount);
     }
 
     function setPeer(uint32 _eid, bytes32 _peer) public override onlyOwner {
