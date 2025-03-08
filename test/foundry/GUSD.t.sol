@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // Mock imports
-import {GrailDollarMock} from "../mocks/GrailDollarMock.sol";
+import {GUSDMock} from "../mocks/GUSDMock.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {OFTComposerMock} from "../mocks/OFTComposerMock.sol";
 
@@ -41,8 +41,8 @@ contract GrailDollarTest is TestHelperOz5 {
     ERC20Mock private USDC;
     ERC20Mock private USDT;
 
-    GrailDollarMock private aGUSD;
-    GrailDollarMock private bGUSD;
+    GUSDMock private aGUSD;
+    GUSDMock private bGUSD;
 
     address private userA = makeAddr("userA");
     address private userB = makeAddr("userB");
@@ -79,17 +79,15 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC = new ERC20Mock("USDC", "USDC", 6);
         USDT = new ERC20Mock("Tether", "USDT", 18);
 
-        aGUSD = GrailDollarMock(
+        aGUSD = GUSDMock(
             _deployOApp(
-                type(GrailDollarMock).creationCode,
-                abi.encode(address(USDC), minterA, address(endpoints[aEid]), address(this))
+                type(GUSDMock).creationCode, abi.encode(address(USDC), minterA, address(endpoints[aEid]), address(this))
             )
         );
 
-        bGUSD = GrailDollarMock(
+        bGUSD = GUSDMock(
             _deployOApp(
-                type(GrailDollarMock).creationCode,
-                abi.encode(address(USDT), minterB, address(endpoints[bEid]), address(this))
+                type(GUSDMock).creationCode, abi.encode(address(USDT), minterB, address(endpoints[bEid]), address(this))
             )
         );
 

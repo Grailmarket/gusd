@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 
 import {Currency} from "../libraries/Currency.sol";
 
-interface IGrailDollar {
+interface IGUSD {
     /// @notice Revert when amount is either zero or less than LOT_AMOUNT
     error InvalidAmount();
 

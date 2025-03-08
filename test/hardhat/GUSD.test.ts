@@ -30,7 +30,7 @@ describe('GrailDollar Test', function () {
         // Contract factory for our tested contract
         //
         // We are using a derived contract that exposes a mint() function for testing purposes
-        GrailDollar = await ethers.getContractFactory('GrailDollarMock')
+        GrailDollar = await ethers.getContractFactory('GUSDMock')
 
         // Fetching the first three signers (accounts) from Hardhat's local Ethereum network
         const signers = await ethers.getSigners()

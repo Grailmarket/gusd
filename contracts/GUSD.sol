@@ -3,11 +3,11 @@ pragma solidity ^0.8.22;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {OFT} from "@layerzerolabs/oft-evm/contracts/OFT.sol";
-import {IGrailDollar} from "./interfaces/IGrailDollar.sol";
+import {IGUSD} from "./interfaces/IGUSD.sol";
 import {IProtocolFees} from "./interfaces/IProtocolFees.sol";
 import {Currency} from "./libraries/Currency.sol";
 
-contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
+contract GUSD is IGUSD, IProtocolFees, OFT {
     uint16 public constant MAX_PROTOCOL_FEE = 1000; // 10%
 
     /// @dev store stable coin accepted
@@ -50,7 +50,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
         emit AddMinter(_minter);
     }
 
-    /// @inheritdoc IGrailDollar
+    /// @inheritdoc IGUSD
     function mint() external override {
         uint256 totalCost = mintPrice;
         uint256 protocolFee;
@@ -68,7 +68,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
         emit Mint(msg.sender, LOT_AMOUNT);
     }
 
-    /// @inheritdoc IGrailDollar
+    /// @inheritdoc IGUSD
     function redeem(uint256 amount) external override {
         uint256 balance = currency.balanceOfSelf();
 
@@ -84,7 +84,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
         emit Redeem(msg.sender, amount);
     }
 
-    /// @inheritdoc IGrailDollar
+    /// @inheritdoc IGUSD
     function creditTo(address account, uint256 amount) external override returns (bool) {
         if (msg.sender != minter) revert OnlyMinterAllowed();
 
@@ -94,7 +94,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
         return true;
     }
 
-    /// @inheritdoc IGrailDollar
+    /// @inheritdoc IGUSD
     function debitFrom(address account, uint256 amount) external override returns (bool) {
         if (msg.sender != minter) revert OnlyMinterAllowed();
 
@@ -104,7 +104,7 @@ contract GrailDollar is IGrailDollar, IProtocolFees, OFT {
         return true;
     }
 
-    /// @inheritdoc IGrailDollar
+    /// @inheritdoc IGUSD
     function recoverToken(Currency recoveredCurrency, address recipient, uint256 amount) external override onlyOwner {
         if (currency == recoveredCurrency) revert CannotRecoverCurrency();
 

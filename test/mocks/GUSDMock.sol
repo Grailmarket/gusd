@@ -3,11 +3,11 @@ pragma solidity ^0.8.0;
 
 import {SendParam} from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
 import {Currency} from "../../contracts/libraries/Currency.sol";
-import {GrailDollar} from "../../contracts/GrailDollar.sol";
+import {GUSD} from "../../contracts/GUSD.sol";
 
-contract GrailDollarMock is GrailDollar {
+contract GUSDMock is GUSD {
     constructor(Currency _currency, address _minter, address _lzEndpoint, address _delegate)
-        GrailDollar(_currency, _minter, _lzEndpoint, _delegate)
+        GUSD(_currency, _minter, _lzEndpoint, _delegate)
     {}
 
     function mint(address _to, uint256 _amount) public {
