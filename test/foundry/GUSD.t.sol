@@ -4,19 +4,14 @@ pragma solidity ^0.8.20;
 // Mock imports
 import {GUSDMock} from "../mocks/GUSDMock.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {OFTComposerMock} from "../mocks/OFTComposerMock.sol";
+import {IGUSD} from "../../contracts/interfaces/IGUSD.sol";
 
 // OApp imports
 import {
     IOAppOptionsType3, EnforcedOptionParam
 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
-
-// OFT imports
-import {IOFT, SendParam, OFTReceipt} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
-import {MessagingFee, MessagingReceipt} from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
-import {OFTMsgCodec} from "@layerzerolabs/oft-evm/contracts/libs/OFTMsgCodec.sol";
-import {OFTComposeMsgCodec} from "@layerzerolabs/oft-evm/contracts/libs/OFTComposeMsgCodec.sol";
+import {MessagingFee, Origin} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 
 // OZ imports
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -46,68 +41,49 @@ contract GrailDollarTest is TestHelperOz5 {
 
     address private userA = makeAddr("userA");
     address private userB = makeAddr("userB");
+    address private owner = makeAddr("owner");
     uint256 private initialBalance = 100 * 10 ** 6;
 
     address private minterA = makeAddr("minterA");
     address private minterB = makeAddr("minterB");
 
-    event SetProtocolFee(uint16 newFee);
-    event Mint(address indexed account, uint256 amount);
-    event Redeem(address indexed account, uint256 amount);
-    event CreditedTo(address indexed account, uint256 amount);
-    event DebitedFrom(address indexed account, uint256 amount);
-    event CollectFee(address indexed collector, address indexed recipient, uint256 amount);
-
-    error InvalidAmount();
-    error PeerExist();
-    error FeeTooLarge(uint16 fee);
-    error InsufficientLiquidity();
-    error OnlyMinterAllowed();
-    error CannotRecoverCurrency();
     error ERC20TransferFromFailed();
-    error AmountExceedsAccruedFee();
     error OwnableUnauthorizedAccount(address owner);
     error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed);
 
     function setUp() public virtual override {
         vm.deal(userA, 1000 ether);
         vm.deal(userB, 1000 ether);
+        vm.deal(owner, 1000 ether);
 
         super.setUp();
-        setUpEndpoints(2, LibraryType.UltraLightNode);
+        setUpEndpoints(6, LibraryType.UltraLightNode);
 
         USDC = new ERC20Mock("USDC", "USDC", 6);
         USDT = new ERC20Mock("Tether", "USDT", 18);
 
         aGUSD = GUSDMock(
             _deployOApp(
-                type(GUSDMock).creationCode, abi.encode(address(USDC), minterA, address(endpoints[aEid]), address(this))
+                type(GUSDMock).creationCode,
+                abi.encode(owner, Currency.wrap(address(USDC)), minterA, aEid, address(endpoints[aEid]))
             )
         );
 
         bGUSD = GUSDMock(
             _deployOApp(
-                type(GUSDMock).creationCode, abi.encode(address(USDT), minterB, address(endpoints[bEid]), address(this))
+                type(GUSDMock).creationCode,
+                abi.encode(owner, Currency.wrap(address(USDT)), minterB, aEid, address(endpoints[bEid]))
             )
         );
 
-        // config and wire the ofts
-        address[] memory ofts = new address[](2);
-        ofts[0] = address(aGUSD);
-        ofts[1] = address(bGUSD);
-        this.wireOApps(ofts);
-
-        // mint tokens
-        // aGUSD.mint(userA, initialBalance);
-        // bGUSD.mint(userB, initialBalance);
+        aGUSD.addPeer(bEid, addressToBytes32(address(bGUSD)));
+        bGUSD.addPeer(aEid, addressToBytes32(address(aGUSD)));
+        vm.deal(address(aGUSD), 1000 ether);
     }
 
     function test_constructor() public view {
-        assertEq(aGUSD.owner(), address(this));
-        assertEq(bGUSD.owner(), address(this));
-
-        assertEq(aGUSD.token(), address(aGUSD));
-        assertEq(bGUSD.token(), address(bGUSD));
+        assertEq(aGUSD.owner(), owner);
+        assertEq(bGUSD.owner(), owner);
 
         assertEq(aGUSD.minter(), minterA);
         assertEq(bGUSD.minter(), minterB);
@@ -115,21 +91,33 @@ contract GrailDollarTest is TestHelperOz5 {
         assertEq(Currency.unwrap(aGUSD.currency()), address(USDC));
         assertEq(Currency.unwrap(bGUSD.currency()), address(USDT));
 
-        assertEq(aGUSD.gusdConversionRate(), 100);
-        assertEq(bGUSD.gusdConversionRate(), 100);
+        assertEq(aGUSD.GUSD_CONVERSION_RATE(), 100);
+        assertEq(bGUSD.GUSD_CONVERSION_RATE(), 100);
 
-        assertEq(aGUSD.protocolFeeBps(), 300);
-        assertEq(bGUSD.protocolFeeBps(), 300);
+        assertEq(aGUSD.mintFeeBps(), 300);
+        assertEq(bGUSD.mintFeeBps(), 300);
 
-        assertEq(aGUSD.currencyConversionRate(), 1);
-        assertEq(bGUSD.currencyConversionRate(), 10 ** 12);
+        assertEq(aGUSD.mintPrice(), 10e6);
+        assertEq(bGUSD.mintPrice(), 10e18);
+
+        assertEq(aGUSD.governanceEid(), 1);
+        assertEq(bGUSD.governanceEid(), 1);
+
+        assertEq(aGUSD.decimalConversionRate(), 1);
+        assertEq(bGUSD.decimalConversionRate(), 10 ** 12);
+
+        assertEq(address(aGUSD.endpoint()), address(endpoints[aEid]));
+        assertEq(address(bGUSD.endpoint()), address(endpoints[bEid]));
+    }
+
+    function bytes32ToAddress(bytes32 _b) internal pure returns (address) {
+        return address(uint160(uint256(_b)));
     }
 
     function test_send_oft() public {
         uint256 tokensToSend = 10 * 10 ** 6;
         bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
-        SendParam memory sendParam =
-            SendParam(bEid, addressToBytes32(userB), tokensToSend, tokensToSend, options, "", "");
+        IGUSD.SendParam memory sendParam = IGUSD.SendParam(bEid, addressToBytes32(userB), tokensToSend, options);
         MessagingFee memory fee = aGUSD.quoteSend(sendParam, false);
 
         aGUSD.mint(userA, initialBalance);
@@ -145,73 +133,30 @@ contract GrailDollarTest is TestHelperOz5 {
         assertEq(bGUSD.balanceOf(userB), initialBalance + tokensToSend);
     }
 
-    function test_send_oft_compose_msg() public {
-        uint256 tokensToSend = 15 * 10 ** 6;
-
-        OFTComposerMock composer = new OFTComposerMock();
-
-        bytes memory options =
-            OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0).addExecutorLzComposeOption(0, 500000, 0);
-        bytes memory composeMsg = hex"1234";
-        SendParam memory sendParam =
-            SendParam(bEid, addressToBytes32(address(composer)), tokensToSend, tokensToSend, options, composeMsg, "");
-        MessagingFee memory fee = aGUSD.quoteSend(sendParam, false);
-
-        aGUSD.mint(userA, initialBalance);
-        bGUSD.mint(userB, initialBalance);
-        assertEq(aGUSD.balanceOf(userA), initialBalance);
-        assertEq(bGUSD.balanceOf(address(composer)), 0);
-
-        vm.prank(userA);
-        (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt) =
-            aGUSD.send{value: fee.nativeFee}(sendParam, fee, payable(address(this)));
-        verifyPackets(bEid, addressToBytes32(address(bGUSD)));
-
-        // lzCompose params
-        uint32 dstEid_ = bEid;
-        address from_ = address(bGUSD);
-        bytes memory options_ = options;
-        bytes32 guid_ = msgReceipt.guid;
-        address to_ = address(composer);
-        bytes memory composerMsg_ = OFTComposeMsgCodec.encode(
-            msgReceipt.nonce, aEid, oftReceipt.amountReceivedLD, abi.encodePacked(addressToBytes32(userA), composeMsg)
-        );
-        this.lzCompose(dstEid_, from_, options_, guid_, to_, composerMsg_);
-
-        assertEq(aGUSD.balanceOf(userA), initialBalance - tokensToSend);
-        assertEq(bGUSD.balanceOf(address(composer)), tokensToSend);
-
-        assertEq(composer.from(), from_);
-        assertEq(composer.guid(), guid_);
-        assertEq(composer.message(), composerMsg_);
-        assertEq(composer.executor(), address(this));
-        assertEq(composer.extraData(), composerMsg_); // default to setting the extraData to the message as well to test
-    }
-
     function test_mint_with_USDC_succeeds() public {
         uint256 lotAmount = 1_000 * 10 ** 6;
         uint256 mintingPrice = 10 * 10 ** 6;
-        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        uint256 mintFee = mintingPrice * 300 / 10_000;
         USDC.mint(userA, 100 * 10 ** 6);
         uint256 balanceBefore = USDC.balanceOf(userA);
-        // uint256 mintPrice = 10
+
         vm.startPrank(userA);
         USDC.approve(address(aGUSD), MAX_INT);
 
         vm.expectEmit();
-        emit Mint(userA, lotAmount);
-        aGUSD.mint();
+        emit IGUSD.Mint(userA, lotAmount, 1, mintingPrice + mintFee);
+        aGUSD.mint(1);
         vm.stopPrank();
 
-        assertEq(USDC.balanceOf(userA), balanceBefore - (mintingPrice + protocolFee));
+        assertEq(USDC.balanceOf(userA), balanceBefore - (mintingPrice + mintFee));
         assertEq(aGUSD.balanceOf(userA), lotAmount);
-        assertEq(aGUSD.protocolFeesAccrued(), protocolFee);
+        assertEq(aGUSD.mintFeesAccrued(), mintFee);
     }
 
     function test_mint_with_USDT_succeeds() public {
         uint256 lotAmount = 1_000 * 10 ** 6;
         uint256 mintingPrice = 10 * 10 ** 18;
-        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        uint256 mintFee = mintingPrice * 300 / 10_000;
         USDT.mint(userA, 100 * 10 ** 18);
         uint256 balanceBefore = USDT.balanceOf(userA);
 
@@ -219,13 +164,13 @@ contract GrailDollarTest is TestHelperOz5 {
         USDT.approve(address(bGUSD), MAX_INT);
 
         vm.expectEmit();
-        emit Mint(userA, lotAmount);
-        bGUSD.mint();
+        emit IGUSD.Mint(userA, lotAmount, 1, mintingPrice + mintFee);
+        bGUSD.mint(1);
         vm.stopPrank();
 
-        assertEq(USDT.balanceOf(userA), balanceBefore - (mintingPrice + protocolFee));
+        assertEq(USDT.balanceOf(userA), balanceBefore - (mintingPrice + mintFee));
         assertEq(bGUSD.balanceOf(userA), lotAmount);
-        assertEq(bGUSD.protocolFeesAccrued(), protocolFee);
+        assertEq(bGUSD.mintFeesAccrued(), mintFee);
     }
 
     function test_mint_reverts_if_insufficient_user_balance() public {
@@ -236,7 +181,7 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC.approve(address(aGUSD), MAX_INT);
 
         vm.expectRevert(ERC20TransferFromFailed.selector);
-        aGUSD.mint();
+        aGUSD.mint(1);
         vm.stopPrank();
 
         assertEq(USDC.balanceOf(userA), balanceBefore);
@@ -247,10 +192,9 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC.mint(userA, 100 * 10 ** 6);
         uint256 balanceBefore = USDC.balanceOf(userA);
 
-        vm.startPrank(userA);
+        vm.prank(userA);
         vm.expectRevert(ERC20TransferFromFailed.selector);
-        aGUSD.mint();
-        vm.stopPrank();
+        aGUSD.mint(1);
 
         assertEq(USDC.balanceOf(userA), balanceBefore);
         assertEq(aGUSD.balanceOf(userA), 0);
@@ -268,7 +212,7 @@ contract GrailDollarTest is TestHelperOz5 {
 
         vm.prank(userA);
         vm.expectEmit();
-        emit Redeem(userA, REDEEM_GUSD_AMOUNT);
+        emit IGUSD.Redeem(userA, REDEEM_GUSD_AMOUNT, USDC_REDEEMED);
         aGUSD.redeem(REDEEM_GUSD_AMOUNT);
 
         assertEq(USDC.balanceOf(address(aGUSD)), LIQUIDITY - USDC_REDEEMED);
@@ -282,7 +226,7 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC.mint(address(aGUSD), LIQUIDITY);
 
         vm.prank(userA);
-        vm.expectRevert(InvalidAmount.selector);
+        vm.expectRevert(IGUSD.InvalidAmount.selector);
         aGUSD.redeem(REDEEM_GUSD_AMOUNT);
 
         assertEq(USDC.balanceOf(address(aGUSD)), LIQUIDITY);
@@ -296,7 +240,7 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC.mint(address(aGUSD), LIQUIDITY);
 
         vm.prank(userA);
-        vm.expectRevert(InvalidAmount.selector);
+        vm.expectRevert(IGUSD.InvalidAmount.selector);
         aGUSD.redeem(REDEEM_GUSD_AMOUNT);
 
         assertEq(USDC.balanceOf(address(aGUSD)), LIQUIDITY);
@@ -310,7 +254,7 @@ contract GrailDollarTest is TestHelperOz5 {
         USDC.mint(address(aGUSD), LIQUIDITY);
 
         vm.prank(userA);
-        vm.expectRevert(InsufficientLiquidity.selector);
+        vm.expectRevert(IGUSD.InsufficientLiquidity.selector);
         aGUSD.redeem(REDEEM_GUSD_AMOUNT);
 
         assertEq(USDC.balanceOf(address(aGUSD)), LIQUIDITY);
@@ -343,53 +287,53 @@ contract GrailDollarTest is TestHelperOz5 {
 
         vm.prank(userA);
         vm.expectEmit();
-        emit Redeem(userA, REDEEM_GUSD_AMOUNT);
+        emit IGUSD.Redeem(userA, REDEEM_GUSD_AMOUNT, USDT_REDEEMED);
         bGUSD.redeem(REDEEM_GUSD_AMOUNT);
 
         assertEq(USDT.balanceOf(address(bGUSD)), LIQUIDITY - USDT_REDEEMED);
         assertEq(USDT.balanceOf(userA), USDT_REDEEMED);
     }
 
-    function test_creditTo_succeeds() public {
+    function test_credit_succeeds() public {
         uint256 amount = 100 * 10 ** 6;
 
         vm.prank(minterA);
         vm.expectEmit();
-        emit CreditedTo(userA, amount);
-        aGUSD.creditTo(userA, amount);
+        emit IGUSD.Credit(userA, amount);
+        aGUSD.credit(userA, amount);
 
         assertEq(aGUSD.balanceOf(userA), amount);
     }
 
-    function test_creditTo_reverts_when_caller_not_minter() public {
+    function test_credit_reverts_when_caller_not_minter() public {
         uint256 amount = 100 * 10 ** 6;
 
         vm.prank(userB);
-        vm.expectRevert(OnlyMinterAllowed.selector);
-        aGUSD.creditTo(userA, amount);
+        vm.expectRevert(IGUSD.OnlyMinterAllowed.selector);
+        aGUSD.credit(userA, amount);
 
         assertEq(aGUSD.balanceOf(userA), 0);
     }
 
-    function test_debitFrom_succeeds() public {
+    function test_debit_succeeds() public {
         uint256 amount = 100 * 10 ** 6;
         aGUSD.mint(userA, amount);
         uint256 balanceBefore = aGUSD.balanceOf(userA);
 
         vm.prank(minterA);
         vm.expectEmit();
-        emit DebitedFrom(userA, amount);
-        aGUSD.debitFrom(userA, amount);
+        emit IGUSD.Debit(userA, amount);
+        aGUSD.debit(userA, amount);
 
         assertEq(aGUSD.balanceOf(userA), balanceBefore - amount);
     }
 
-    function test_debitFrom_reverts_when_caller_not_minter() public {
+    function test_debit_reverts_when_caller_not_minter() public {
         uint256 amount = 100 * 10 ** 6;
 
         vm.prank(userB);
-        vm.expectRevert(OnlyMinterAllowed.selector);
-        aGUSD.debitFrom(userA, amount);
+        vm.expectRevert(IGUSD.OnlyMinterAllowed.selector);
+        aGUSD.debit(userA, amount);
 
         assertEq(aGUSD.balanceOf(userA), 0);
     }
@@ -443,116 +387,165 @@ contract GrailDollarTest is TestHelperOz5 {
         assertEq(USDT.balanceOf(userB), 0);
     }
 
-    function test_collectProtocolFees_succeeds() public {
+    function test_collectMintFees_succeeds() public {
         uint256 numOfMints = 5;
         uint256 mintingPrice = 10 * 10 ** 6;
-        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        uint256 mintFee = mintingPrice * 300 / 10_000;
         USDC.mint(userA, 1000 * 10 ** 6);
 
         vm.startPrank(userA);
         USDC.approve(address(aGUSD), MAX_INT);
 
         for (uint256 i = 0; i < numOfMints; i++) {
-            aGUSD.mint();
+            aGUSD.mint(1);
         }
 
         vm.stopPrank();
 
-        uint256 amount = protocolFee * 3;
+        uint256 amount = mintFee * 3;
         uint256 userBBalanceBefore = USDC.balanceOf(userB);
-        uint256 accruedFee = protocolFee * numOfMints;
+        uint256 accruedFee = mintFee * numOfMints;
 
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
-        vm.prank(aGUSD.owner());
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee);
+
         vm.expectEmit();
-        emit CollectFee(aGUSD.owner(), userB, amount);
-        aGUSD.collectProtocolFee(userB, amount);
+        emit IGUSD.CollectMintFee(aGUSD.owner(), userB, amount);
+        vm.prank(owner);
+        aGUSD.collectMintFee(userB, amount);
 
         assertEq(USDC.balanceOf(userB), userBBalanceBefore + amount);
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee - amount);
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee - amount);
     }
 
-    function test_collectProtocolFees_reverts_when_amount_exceeds_accrued_fee() public {
+    function test_collectMintFees_reverts_when_amount_exceeds_accrued_fee() public {
         uint256 numOfMints = 5;
         uint256 mintingPrice = 10 * 10 ** 6;
-        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        uint256 mintFee = mintingPrice * 300 / 10_000;
         USDC.mint(userA, 1000 * 10 ** 6);
 
         vm.startPrank(userA);
         USDC.approve(address(aGUSD), MAX_INT);
 
         for (uint256 i = 0; i < numOfMints; i++) {
-            aGUSD.mint();
+            aGUSD.mint(1);
         }
 
         vm.stopPrank();
 
-        uint256 amount = protocolFee * 30;
+        uint256 amount = mintFee * 30;
         uint256 userBBalanceBefore = USDC.balanceOf(userB);
-        uint256 accruedFee = protocolFee * numOfMints;
+        uint256 accruedFee = mintFee * numOfMints;
 
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee);
         vm.prank(aGUSD.owner()); // not necessary
-        vm.expectRevert(AmountExceedsAccruedFee.selector);
-        aGUSD.collectProtocolFee(userB, amount);
+        vm.expectRevert(IGUSD.AmountExceedsAccruedFee.selector);
+        aGUSD.collectMintFee(userB, amount);
 
         assertEq(USDC.balanceOf(userB), userBBalanceBefore);
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee);
     }
 
-    function test_collectProtocolFees_reverts_when_caller_not_owner() public {
+    function test_collectMintFees_reverts_when_caller_not_owner() public {
         uint256 numOfMints = 5;
         uint256 mintingPrice = 10 * 10 ** 6;
-        uint256 protocolFee = mintingPrice * 300 / 10_000;
+        uint256 mintFee = mintingPrice * 300 / 10_000;
         USDC.mint(userA, 1000 * 10 ** 6);
 
         vm.startPrank(userA);
         USDC.approve(address(aGUSD), MAX_INT);
 
         for (uint256 i = 0; i < numOfMints; i++) {
-            aGUSD.mint();
+            aGUSD.mint(1);
         }
 
         vm.stopPrank();
 
-        uint256 amount = protocolFee * 3;
+        uint256 amount = mintFee * 3;
         uint256 userBBalanceBefore = USDC.balanceOf(userB);
-        uint256 accruedFee = protocolFee * numOfMints;
+        uint256 accruedFee = mintFee * numOfMints;
 
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee);
         vm.prank(userA);
         vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, userA));
-        aGUSD.collectProtocolFee(userB, amount);
+        aGUSD.collectMintFee(userB, amount);
 
         assertEq(USDC.balanceOf(userB), userBBalanceBefore);
-        assertEq(aGUSD.protocolFeesAccrued(), accruedFee);
+        assertEq(aGUSD.mintFeesAccrued(), accruedFee);
     }
 
-    function test_setProtocolFee_succeeds() public {
-        assertEq(aGUSD.protocolFeeBps(), 300);
+    function test_setMintFee_succeeds() public {
+        assertEq(aGUSD.mintFeeBps(), 300);
 
+        vm.prank(owner);
         vm.expectEmit();
-        emit SetProtocolFee(500);
-        aGUSD.setProtocolFee(500);
+        emit IGUSD.SetMintFee(500);
+        aGUSD.setMintFee(500);
 
-        assertEq(aGUSD.protocolFeeBps(), 500);
+        assertEq(aGUSD.mintFeeBps(), 500);
     }
 
-    function test_setProtocolFee_reverts_when_fee_exceeds_max_allowed() public {
-        assertEq(aGUSD.protocolFeeBps(), 300);
+    function test_setMintFee_reverts_when_fee_exceeds_max_allowed() public {
+        assertEq(aGUSD.mintFeeBps(), 300);
         uint16 fee = 1_500;
 
-        vm.expectRevert(abi.encodeWithSelector(FeeTooLarge.selector, fee));
-        aGUSD.setProtocolFee(fee);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IGUSD.FeeTooLarge.selector, fee));
+        aGUSD.setMintFee(fee);
 
-        assertEq(aGUSD.protocolFeeBps(), 300);
+        assertEq(aGUSD.mintFeeBps(), 300);
     }
 
-    function test_setProtocolFee_reverts_when_caller_not_owner() public {
+    function test_setMintFee_reverts_when_caller_not_owner() public {
         vm.prank(userA);
         vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, userA));
-        aGUSD.setProtocolFee(500);
+        aGUSD.setMintFee(500);
 
-        assertEq(aGUSD.protocolFeeBps(), 300);
+        assertEq(aGUSD.mintFeeBps(), 300);
+    }
+
+    function test_addPeers_succeeds() public {
+        IGUSD.PeerConfig[] memory configs = new IGUSD.PeerConfig[](4);
+        configs[0].eid = 3;
+        configs[1].eid = 4;
+        configs[2].eid = 5;
+        configs[3].eid = 6;
+        GUSDMock[] memory gusds = new GUSDMock[](4);
+
+        for (uint256 i = 0; i < configs.length; i++) {
+            gusds[i] = GUSDMock(
+                _deployOApp(
+                    type(GUSDMock).creationCode,
+                    abi.encode(owner, Currency.wrap(address(USDT)), minterB, aEid, address(endpoints[configs[i].eid]))
+                )
+            );
+
+            configs[i].peer = addressToBytes32(address(gusds[i]));
+        }
+
+        assertEq(aGUSD.isPeer(configs[0].eid, configs[0].peer), false);
+        assertEq(aGUSD.isPeer(configs[1].eid, configs[1].peer), false);
+        assertEq(aGUSD.isPeer(configs[2].eid, configs[2].peer), false);
+        assertEq(aGUSD.isPeer(configs[3].eid, configs[3].peer), false);
+
+        bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200000, 0);
+        MessagingFee memory _fee = aGUSD.quoteAddPeers(configs, _options);
+        vm.prank(owner);
+        aGUSD.addPeers{value: _fee.nativeFee}(configs, _options);
+
+        for (uint256 i = 0; i < configs.length; i++) {
+            verifyPackets(configs[i].eid, configs[i].peer);
+        }
+
+        assertEq(aGUSD.isPeer(configs[0].eid, configs[0].peer), true);
+        assertEq(aGUSD.isPeer(configs[1].eid, configs[1].peer), true);
+        assertEq(aGUSD.isPeer(configs[2].eid, configs[2].peer), true);
+        assertEq(aGUSD.isPeer(configs[3].eid, configs[3].peer), true);
+
+        for (uint256 i = 0; i < configs.length; i++) {
+            assertEq(gusds[i].isPeer(aEid, addressToBytes32(address(aGUSD))), true);
+            for (uint256 j = 0; j < configs.length; j++) {
+                assertEq(gusds[i].isPeer(configs[j].eid, configs[j].peer), true);
+            }
+        }
     }
 }
